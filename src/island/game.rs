@@ -91,7 +91,7 @@ impl Player{
         let dx = (self.king_pos.x - pos.x).abs();
         let dy = (self.king_pos.y - pos.y).abs();
 
-        dx <= VIEW_RADIUS && dy <= VIEW_RADIUS
+        dx <= VIEW_RADIUS //&& dy <= VIEW_RADIUS
     }
 }
 
