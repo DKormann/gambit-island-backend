@@ -1,0 +1,12 @@
+/Users/peergynt/fun/rust/gambit_island/backend/target/debug/deps/yansi-0e9c32a374553921.rmeta: /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/lib.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/macros.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/windows.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/paint.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/style.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/color.rs
+
+/Users/peergynt/fun/rust/gambit_island/backend/target/debug/deps/libyansi-0e9c32a374553921.rlib: /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/lib.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/macros.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/windows.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/paint.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/style.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/color.rs
+
+/Users/peergynt/fun/rust/gambit_island/backend/target/debug/deps/yansi-0e9c32a374553921.d: /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/lib.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/macros.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/windows.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/paint.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/style.rs /Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/color.rs
+
+/Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/lib.rs:
+/Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/macros.rs:
+/Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/windows.rs:
+/Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/paint.rs:
+/Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/style.rs:
+/Users/peergynt/.cargo/registry/src/github.com-1ecc6299db9ec823/yansi-0.5.1/src/color.rs:

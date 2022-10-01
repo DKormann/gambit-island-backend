@@ -1,0 +1,2 @@
+cargo:rustc-env=TYPENUM_BUILD_CONSTS=/Users/peergynt/fun/rust/gambit_island/backend/target/debug/build/typenum-bbbd944f7adb252c/out/consts.rs
+cargo:rustc-env=TYPENUM_BUILD_OP=/Users/peergynt/fun/rust/gambit_island/backend/target/debug/build/typenum-bbbd944f7adb252c/out/op.rs
