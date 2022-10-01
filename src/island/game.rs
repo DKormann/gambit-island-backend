@@ -95,7 +95,7 @@ impl Player{
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug,PartialEq)]
 enum Piece{
     King,
     Rook,
@@ -128,7 +128,7 @@ impl Piece{
     }
 }
 
-#[derive(Clone, Copy,Debug)]
+#[derive(Clone, Copy,Debug,PartialEq)]
 enum Tile{
     Empty,
     Taken( PlayerNumber,Piece),
@@ -269,7 +269,7 @@ impl Game{
                                     //spawn bishop
                                     println!("tryig to wapswn bishop");
 
-                                    if self.move_is_possible(start, end, player, Piece::Bishop){
+                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Bishop){
                                         println!("spawn bishop");
 
                                         self.board[end.n as usize] = Tile::Taken(player_num,Piece::Bishop);
@@ -283,7 +283,7 @@ impl Game{
 
                                     println!("tryig to wapswn knight");
 
-                                    if self.move_is_possible(start, end, player, Piece::Knight){
+                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Knight){
                                         
                                         self.board[end.n as usize] = Tile::Taken(player_num, Piece::Knight);
                                         self.update_views(start, end);
@@ -296,7 +296,7 @@ impl Game{
                                 2=>{
                                     println!("tryig to wapswn queen");
 
-                                    if self.move_is_possible(start, end, player, Piece::Queen){
+                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Queen){
                                         
                                         self.board[end.n as usize] = Tile::Taken(player_num, Piece::Queen);
                                         self.update_views(start, end);
@@ -309,7 +309,7 @@ impl Game{
                                 5=>{
                                     println!("tryig to wapswn rook");
 
-                                    if self.move_is_possible(start, end, player, Piece::Rook){
+                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Rook){
                                         
                                         self.board[end.n as usize] = Tile::Taken(player_num, Piece::Rook);
                                         self.update_views(start, end);
@@ -319,7 +319,7 @@ impl Game{
                                     return false
                                 }
                                 6=>{
-                                    if self.move_is_possible(start, end, player, Piece::Pawn){
+                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Pawn){
                                         
                                         self.board[end.n as usize] = Tile::Taken(player_num, Piece::Pawn);
                                         self.update_views(start, end);
