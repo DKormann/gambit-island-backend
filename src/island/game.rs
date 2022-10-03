@@ -27,8 +27,6 @@ struct Pos{
 
 struct PosError;
 
-
-
 impl Pos{
     fn from_num(n:i32) -> Pos{
 
@@ -56,7 +54,7 @@ impl Pos{
     }
 }
 
-#[derive(Eq, Hash, PartialEq,Clone, Copy)]
+#[derive(Eq, Hash, PartialEq,Clone, Copy, Debug)]
 struct PlayerID (i32);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -77,7 +75,7 @@ impl Player{
     
     fn relative_to_absolute(&self,num:i32)->Pos{
 
-        let relative_point = (num/9,num%9);
+        let relative_point = ((num-1)/9,(num-1)%9+1);
 
         let king_pos = self.king_pos;
 
@@ -88,10 +86,15 @@ impl Player{
     }
 
     fn can_see(&self,pos:Pos)->bool{
+
         let dx = (self.king_pos.x - pos.x).abs();
         let dy = (self.king_pos.y - pos.y).abs();
 
-        dx <= VIEW_RADIUS //&& dy <= VIEW_RADIUS
+        let res = dx <= VIEW_RADIUS && dy <= VIEW_RADIUS;
+        if ! res{
+            println!("cant see that far")
+        }
+        res
     }
 }
 
@@ -106,15 +109,16 @@ enum Piece{
 }
 
 impl Piece{
-    fn from_num(num:usize)->Piece{
-        [
-            Piece::King,
-            Piece::Rook,
-            Piece::Knight,
-            Piece::Bishop,
-            Piece::Queen,
-            Piece::Pawn,
-        ][num -1]
+    fn from_num(num:i32)->Piece{
+        match num{
+            1=>Piece::King,
+            2=>Piece::Queen,
+            3=>Piece::Bishop,
+            4=>Piece::Knight,
+            5=>Piece::Rook,
+            6=>Piece::Pawn,
+            _=>{panic!{"cant convert {} to piece",num}},
+        }
     }
     fn to_num(&self)->usize{
         match self{
@@ -124,6 +128,16 @@ impl Piece{
             Piece::Knight=>4,
             Piece::Rook=>5,
             Piece::Pawn=>6,
+        }
+    }
+    fn get_cost(&self)->u32{
+        match self{
+            Piece::King=>{panic!("cant take cost of king")},
+            Piece::Queen=>9,
+            Piece::Bishop=>3,
+            Piece::Knight=>3,
+            Piece::Rook=>5,
+            Piece::Pawn=>1,
         }
     }
 }
@@ -158,8 +172,6 @@ impl Game{
     pub fn add_player(&mut self,player_id:i32)->i32{
 
 
-
-
         let id = PlayerID(player_id);
 
         if self.players.contains_key(&id){
@@ -171,7 +183,6 @@ impl Game{
 
         let start_position = Pos::from_ints( 2,(num*2+2)%BOARD_SIZE);
 
-        
 
         self.board[start_position.n as usize] = Tile::Taken(PlayerNumber(num), Piece::King);
         self.update_views(start_position,start_position);
@@ -204,31 +215,57 @@ impl Game{
         self.players.get(&PlayerID(id))
     }
 
-    pub fn make_move(&mut self,player_id: i32,start:i32,end:i32,spawn:i32)->bool{
+    pub fn make_move(&mut self,player_id: i32,start:i32,end:i32,spawn:i32)->bool{   
 
-        self.players.entry(PlayerID(player_id)).and_modify(|player| {player.view_changed = true});
+        println!("trying to make move {} {} {} ",start,end,spawn);
+
+        let mut energy=0.0;
+        
         let player_id = PlayerID(player_id);
+        let mut player_num:PlayerNumber = PlayerNumber(-1);
 
+        let start_pos:Pos;
+        let end_pos:Pos;
+
+        if let Some(player) = self.players.get_mut(&player_id){
+
+            player.view_changed = true;
+            player_num = player.number;
+            energy = player.energy;
+
+            let time_diff = player.last_move_time.elapsed().as_secs_f32();
+            player.last_move_time = time::Instant::now();
+            energy += (time_diff * 0.2) ;
+
+            energy = f32::min(energy, 10.);
+
+            start_pos = player.relative_to_absolute(start);
+            end_pos = player.relative_to_absolute(end);
+
+        }else{
+            println!("failed to get player for {:?}",player_id);
+            return false
+        }
+
+        if energy < 1. {
+            println!("no energy");
+            self.players.entry(player_id).and_modify(|p|{
+                p.energy = energy;
+            });
+
+            return false
+        }
+        
         
 
-        if let Some(player) = self.players.get (&player_id){
+        let succ = match self.board[start_pos.n as usize]{
 
-            println!("trying to make move {} {} {} ",start,end,spawn);
-            println!("king {:?} ",player.king_pos);
+            Tile::Taken(num,piece)=>{
 
-            let start = player.relative_to_absolute(start);
-            let end:Pos = player.relative_to_absolute(end);
-
-            println!("transformed{:?} {:?} ",start,end);
-
-            match self.board[start.n as usize]{
-
-                Tile::Taken(player_num,piece)=>{
-
-                    if player.number != player_num{
-                        println!("move not allowed {:?} {:?}",player.number, player_num);
-                        return  false
-                    }
+                if num != player_num{
+                    println!("move not allowed {:?} {:?}",num, player_num);
+                    false
+                }else{
 
                     match piece{
 
@@ -240,171 +277,97 @@ impl Game{
                                     //try move the king
                                     println!("try tp move king");
 
+                                    energy -= 1.;
+
+                                    let mut succ = false;
+
                                     for dir in [STRAIGHTS,DIAGONALS].concat(){
 
-                                        if let Ok(target) = start.step(dir.0, dir.1){
-                                            if target.n == end.n{
+                                        if let Ok(target) = start_pos.step(dir.0, dir.1){
+                                            if target.n == end_pos.n{
                                                 //move the king
 
-                                                self.board[end.n as usize] = self.board[start.n as usize];
-                                                self.board[start.n as usize] = Tile::Empty;
+                                                self.board[end_pos.n as usize] = self.board[start_pos.n as usize];
+                                                self.board[start_pos.n as usize] = Tile::Empty;
 
-
-                                                // safe variant of : player.king_pos = target;
                                                 self.players.entry(player_id).and_modify(|player| {
                                                     player.king_pos = target;
                                                 });
 
-                                                
-                                                self.update_views(start,end);
-
-
-                                                return true
+                                                succ = true;
+                                                break
                                             }
                                         }
                                     }
-                                    return false
+                                    succ
                                 }
-                                3=>{
-                                    //spawn bishop
-                                    println!("tryig to wapswn bishop");
-
-                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Bishop){
-                                        println!("spawn bishop");
-
-                                        self.board[end.n as usize] = Tile::Taken(player_num,Piece::Bishop);
-                                        self.update_views(start, end);
-                                        return true
-                                    }
-                                    return false
-                                }
-                                4=>{
-                                    //spawn knight
-
-                                    println!("tryig to wapswn knight");
-
-                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Knight){
-                                        
-                                        self.board[end.n as usize] = Tile::Taken(player_num, Piece::Knight);
-                                        self.update_views(start, end);
-
-                                        return true
-                                    }
-                                    return false
-
-                                }
-                                2=>{
-                                    println!("tryig to wapswn queen");
-
-                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Queen){
-                                        
-                                        self.board[end.n as usize] = Tile::Taken(player_num, Piece::Queen);
-                                        self.update_views(start, end);
-
-                                        return true
-                                    }
-                                    return false
-
-                                }
-                                5=>{
-                                    println!("tryig to wapswn rook");
-
-                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Rook){
-                                        
-                                        self.board[end.n as usize] = Tile::Taken(player_num, Piece::Rook);
-                                        self.update_views(start, end);
-
-                                        return true
-                                    }
-                                    return false
-                                }
-                                6=>{
-                                    if self.board[end.n as usize] == Tile::Empty && self.move_is_possible(start, end, player, Piece::Pawn){
-                                        
-                                        self.board[end.n as usize] = Tile::Taken(player_num, Piece::Pawn);
-                                        self.update_views(start, end);
-
-                                        return true
-                                    }
-                                    return false
-                                }
-                                _=>{
-                                    false
-                                }
+                                _=> self.spawn_piece(&mut energy, spawn, end_pos, start_pos, player_id, player_num)
                             }
                         }
-                        Piece::Knight=>{
 
-                            if self.move_is_possible(start, end, player, Piece::Knight){
+                        _=>{
+                            energy -= 1.;
 
-                                self.board[end.n as usize] = self.board[start.n as usize];
-                                self.board[start.n as usize] = Tile::Empty;
-                                self.update_views(start, end);
+                            self.players.entry(player_id).and_modify(|p|{
+                                p.energy = energy;
+                            });
 
-                                return true
-                            }
-                            false
+                            self.piece_move(start_pos, end_pos, &player_id, piece)
                         }
-                        Piece::Bishop=>{
-                            if self.move_is_possible(start, end, player, Piece::Bishop){
-
-                                self.board[end.n as usize] = self.board[start.n as usize];
-                                self.board[start.n as usize] = Tile::Empty;
-                                self.update_views(start, end);
-
-                                return true
-                            }
-                            false
-                        }
-                        Piece::Rook=>{
-                            if self.move_is_possible(start, end, player, Piece::Rook){
-
-                                self.board[end.n as usize] = self.board[start.n as usize];
-                                self.board[start.n as usize] = Tile::Empty;
-                                self.update_views(start, end);
-
-                                return true
-                            }
-                            false
-                        }
-                        Piece::Queen=>{
-                            if self.move_is_possible(start, end, player, Piece::Queen){
-
-                                self.board[end.n as usize] = self.board[start.n as usize];
-                                self.board[start.n as usize] = Tile::Empty;
-                                self.update_views(start, end);
-
-                                return true
-                            }
-                            false
-                        }
-                        Piece::Pawn=>{
-                            if self.move_is_possible(start, end, player, Piece::Pawn){
-
-                                self.board[end.n as usize] = self.board[start.n as usize];
-                                self.board[start.n as usize] = Tile::Empty;
-                                self.update_views(start, end);
-
-                                return true
-                            }
-                            false
-                        }
-
-                        _=>false
                     }
-                
                 }
-                Tile::Empty=>{
-                    println!{"error empty origin"}
-                    false
-                }
+
             }
+
+            Tile::Empty=>{
+                println!{"error empty origin"}
+                false
+            }
+
+        };
+        self.players.entry(player_id).and_modify(|p|{
+            p.energy = energy;
+        });
+        if succ{
+            self.update_views(start_pos, end_pos);
+        }
+        succ
+    
+    }
+
+    fn spawn_piece(&mut self, energy: &mut f32, spawn: i32, end_pos: Pos, start_pos: Pos, player_id: PlayerID, player_num: PlayerNumber) -> bool {
+        let piece = Piece::from_num(spawn);
+        println!("spaning {:?}",piece);
+        
+        let cost = piece.get_cost() as f32;
+
+        if *energy >= cost{
+            *energy -= cost
         }else{
+            println!("not enough energy");
+            return false
+        };
 
+        
 
+        if self.board[end_pos.n as usize] == Tile::Empty && self.move_is_possible(start_pos, end_pos, &player_id, piece){
+    
+            self.board[end_pos.n as usize] = Tile::Taken(player_num, piece);
+            true
+        }else{
             false
         }
+    }
 
+    fn piece_move(&mut self, start: Pos, end: Pos, player_id: &PlayerID, piece: Piece) -> bool {
+        if self.move_is_possible(start, end, player_id, piece){
+
+            self.board[end.n as usize] = self.board[start.n as usize];
+            self.board[start.n as usize] = Tile::Empty;
+
+            return true
+        }
+        return false
     }
 
     pub fn request_update(&mut self, player_id:i32) -> Result<Option<GameState>,oneshot::Receiver<GameState>>{
@@ -535,108 +498,122 @@ impl Game{
             }
         }
 
-            Some(GameState{
-                data:Vec::from(res),
-                offset:(player.king_pos.x,player.king_pos.y)
-            })
+        Some(GameState{
+            data:Vec::from(res),
+            offset:(player.king_pos.x,player.king_pos.y),
+            energy : player.energy,
+        })
         } else{
             None
         }  
 
     }
 
-    fn move_is_possible(&self, start:Pos,end:Pos,player:&Player,piece:Piece)->bool{
-        match piece{
-            Piece::Knight=>{
-                for hop in KNIGHTHOPS.iter(){
-                    let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
-                    if pos_is_on_board(target) && player.can_see(target) && target == end{
+    fn move_is_possible(&self, start:Pos,end:Pos,player_id:&PlayerID,piece:Piece)->bool{
 
-                        match self.board[target.n as usize]{
-                            Tile::Taken(pn,_)=>{
-                                if pn != player.number{
+        if let Some(player) = self.players.get(player_id){
+            println!("move possible?");
+            match piece{
+                Piece::Knight=>{
+                    for hop in KNIGHTHOPS.iter(){
+                        let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
+                        if pos_is_on_board(target) && player.can_see(target) && target == end{
+
+                            match self.board[target.n as usize]{
+                                Tile::Taken(pn,_)=>{
+                                    if pn != player.number{
+                                        return true
+                                    }else{
+
+                                        println!("field blocked");
+                                        return false
+                                    }
+                                }
+                                Tile::Empty=>{
                                     return true
-                                }else{
-
-                                    println!("field blocked");
-                                    return false
                                 }
                             }
-                            Tile::Empty=>{
+                        }
+                    }
+                    println!("no match ing knight mvoe");
+                    false
+                }
+                Piece::Pawn=>{
+                    for hop in STRAIGHTS.iter(){
+                        let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
+                        if pos_is_on_board(target) && player.can_see(target) && target == end{
+
+                            if let Tile::Taken( _,_ ) = self.board[target.n as usize]{
+                                return false
+                            }else{
                                 return true
                             }
                         }
                     }
-                }
-                println!("no match ing knight mvoe");
-            }
-            Piece::Pawn=>{
-                for hop in STRAIGHTS.iter(){
-                    let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
-                    if pos_is_on_board(target) && player.can_see(target) && target == end{
+                    for hop in DIAGONALS.iter(){
+                        let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
+                        if pos_is_on_board(target) && player.can_see(target) && target == end{
 
-                        if let Tile::Taken( _,_ ) = self.board[target.n as usize]{
-                            return false
-                        }else{
-                            return true
+                            if let Tile::Taken( other,_ ) = self.board[target.n as usize]{
+                                return other != player.number
+                            }else{
+                                return false
+                            }
                         }
                     }
+                    false
+
                 }
-                for hop in DIAGONALS.iter(){
-                    let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
-                    if pos_is_on_board(target) && player.can_see(target) && target == end{
+                Piece::Bishop=>{
 
-                        if let Tile::Taken( other,_ ) = self.board[target.n as usize]{
-                            return other != player.number
-                        }else{
-                            return false
-                        }
-                    }
+                    self.check_lines(start, end, player, DIAGONALS)
                 }
+                Piece::Queen=>{
+                    self.check_lines(start, end ,player, DIAGONALS)||
+                    self.check_lines(start, end, player, STRAIGHTS)
+                }
+                Piece::Rook=>{
+                    self.check_lines(start, end, player, STRAIGHTS)
+                }
+                _=>{panic!()}   
+            }
 
-            }
-            Piece::Bishop=>{
-
-                return self.check_lines(start, end, player, DIAGONALS)
-            }
-            Piece::Queen=>{
-                return self.check_lines(start, end ,player, DIAGONALS)||
-                        self.check_lines(start, end, player, STRAIGHTS);
-            }
-            Piece::Rook=>{
-                return self.check_lines(start, end, player, STRAIGHTS)
-            }
-            _=>{}   
+        }else {
+            false
         }
-        false
     }
 
     fn check_lines(&self,start:Pos,end:Pos,player:&Player,dirs: [(i32,i32);4])-> bool{
+
+        println!("looking for {:?}",end);
 
         for dir in dirs.iter(){
 
             let mut target = start;
             loop{
                 target = Pos::from_ints(target.x + dir.0, target.y + dir.1);
+
+                println!("{:?}",target);
+
                 if pos_is_on_board(target) && player.can_see(target){
 
                     if target == end{
                         if let Tile::Taken(pn,_) = self.board[target.n as usize]{
+                            println!("not possible cant hit own unit");
                             return pn != player.number
-                        }else{
+                        }else {
+                            println!("move is possible");
                             return true
                         }
                     }
                     if let Tile::Taken(_,_) = self.board[target.n as usize]{
 
-
                         break
                     }
                 }else{
-
+                    println!("{:?}",target);
                     break
                 }
-
             }
         }
         false
@@ -648,6 +625,10 @@ impl Game{
 }
 
 fn pos_is_on_board(pos:Pos)->bool{
-    !(pos.x < 0 || pos.y < 0 || pos.x >= BOARD_SIZE || pos.y >= BOARD_SIZE)
+    let res = !(pos.x < 0 || pos.y < 0 || pos.x >= BOARD_SIZE || pos.y >= BOARD_SIZE);
+    if ! res {
+        println!("not on board")
+    }
+    res
 }
 

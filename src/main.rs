@@ -86,7 +86,8 @@ async fn get_game (player:i32, bank : &State<Bank>) -> Result<Json<(i32,i32)>,No
 #[derive(Serialize)]
 pub struct GameState{
     data : Vec<(i32,i32)>,
-    offset :(i32,i32)
+    offset :(i32,i32),
+    energy : f32,
 }
 
 
@@ -99,7 +100,6 @@ async fn get_state (game_id:i32, player_id:i32,bank: &State<Bank>) -> Result<Jso
     match bank.lock(){
         Ok(mut mm)=>{
             
-
             let future = mm.get_board_state(game_id, player_id);
             match  future{
                 Ok(req)=>{
