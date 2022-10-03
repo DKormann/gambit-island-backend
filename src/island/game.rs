@@ -219,6 +219,10 @@ impl Game{
 
         println!("trying to make move {} {} {} ",start,end,spawn);
 
+        if start == end{
+            return false
+        }
+
         let mut energy=0.0;
         
         let player_id = PlayerID(player_id);
@@ -235,9 +239,12 @@ impl Game{
 
             let time_diff = player.last_move_time.elapsed().as_secs_f32();
             player.last_move_time = time::Instant::now();
+
+
             energy += (time_diff * 0.2) ;
 
             energy = f32::min(energy, 10.);
+
 
             start_pos = player.relative_to_absolute(start);
             end_pos = player.relative_to_absolute(end);
@@ -308,10 +315,7 @@ impl Game{
                         _=>{
                             energy -= 1.;
 
-                            self.players.entry(player_id).and_modify(|p|{
-                                p.energy = energy;
-                            });
-
+                            
                             self.piece_move(start_pos, end_pos, &player_id, piece)
                         }
                     }
@@ -328,6 +332,7 @@ impl Game{
         self.players.entry(player_id).and_modify(|p|{
             p.energy = energy;
         });
+
         if succ{
             self.update_views(start_pos, end_pos);
         }
