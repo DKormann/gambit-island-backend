@@ -67,7 +67,7 @@ async fn main()->Result<(), rocket::Error>{
 }
 
 
-#[get("/new_game/<player>")]
+#[get("/api/new_game/<player>")]
 async fn get_game (player:i32, bank : &State<Bank>) -> Result<Json<(i32,i32)>,NotFound<String>>{
 
     match bank.lock(){
@@ -93,7 +93,7 @@ pub struct GameState{
 
 // use rocket::tokio::time::{sleep,Duration};
 
-#[get("/get_state/<game_id>/<player_id>")]
+#[get("/api/get_state/<game_id>/<player_id>")]
 async fn get_state (game_id:i32, player_id:i32,bank: &State<Bank>) -> Result<Json<GameState>,NotFound<String>>{
 
     let listener : oneshot::Receiver<GameState>;
@@ -142,7 +142,7 @@ async fn get_state (game_id:i32, player_id:i32,bank: &State<Bank>) -> Result<Jso
 
 }
 
-#[post("/make_move/<game_id>/<player_id>/<start>/<end>/<spawn>")]
+#[post("/api/make_move/<game_id>/<player_id>/<start>/<end>/<spawn>")]
 async fn make_move(game_id:i32,player_id:i32,start:i32,end:i32,spawn:i32,bank:&State<Bank>)->Json<bool>{
     let res = match bank.lock(){
         Ok(mut mm)=>{
