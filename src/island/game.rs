@@ -98,6 +98,7 @@ impl Player{
         }
         res
     }
+
 }
 
 #[derive(Clone, Copy, Debug,PartialEq)]
@@ -285,6 +286,16 @@ impl Game{
                                 0=>{
                                     //try move the king
                                     println!("try tp move king");
+
+                                    if let Tile::Taken(num, _) =  self.board[end_pos.n as usize] {
+                                        if num == player_num {
+                                            return false
+                                        }else{
+                                            println!("{:?} not playernum {:?}",num,player_num)
+                                        }
+                                    }else{
+                                        println!("end empty")
+                                    }
 
                                     energy -= 1.;
 
