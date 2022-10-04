@@ -14,6 +14,8 @@ const BOARD_SIZE : i32 = 20;
 const VIEW_SIZE : i32 = 9 ;
 const VIEW_RADIUS: i32 =  VIEW_SIZE/2;
 
+const ENERGY_REGEN:f32 = 0.2;
+
 const DIAGONALS :[(i32, i32);4] = [(1,1),(-1,1),(1,-1),(-1,-1)];
 const STRAIGHTS : [(i32,i32);4] = [(1,0),(-1,0),(0,1),(0,-1)];
 const KNIGHTHOPS : [(i32,i32);8] = [(1,2),(2,1),(1,-2),(2,-1),(-1,-2),(-2,-1),(-1,2),(-2,1)];
@@ -241,7 +243,7 @@ impl Game{
             player.last_move_time = time::Instant::now();
 
 
-            energy += (time_diff * 0.2) ;
+            energy += (time_diff * ENERGY_REGEN) ;
 
             energy = f32::min(energy, 10.);
 
@@ -435,23 +437,22 @@ impl Game{
     fn update_player_view(&mut self, player_id: &PlayerID ){
 
 
-        let owned_sender : Option<oneshot::Sender<GameState>>;
+        // let owned_sender : Option<oneshot::Sender<GameState>>;
 
         if let Some(view) = self.get_current_view(player_id){
 
 
             self.players.entry(player_id.clone()).and_modify(|player|{
+                println!("uvse: {} ",player.energy);
                 if let Some(sender) = std::mem::replace(&mut player.update_sender, None){
                     sender.send(view);
                 }else{
                     player.view_changed = true;
                 }
+                println!("uvee: {}",player.energy);
             });
 
         }
-
-
-        
     }
 
     fn get_current_view(&mut self, player_id: &PlayerID)->Option<GameState>{
@@ -460,58 +461,59 @@ impl Game{
 
         if let Some(player) = self.players.get_mut(player_id){
 
-        
+            player.view_changed = false;
 
-        player.view_changed = false;
+            let mut res = [(0,0);81];
 
-        let mut res = [(0,0);81];
+            let margin = 4;
 
-        let margin = 4;
+            let mut index = 0;
+            for i in 0..9{
+                for j in 0..9{
 
-        let mut index = 0;
-        for i in 0..9{
-            for j in 0..9{
+                    let x = i + player.king_pos.x as i32 -margin;
+                    let y = j + player.king_pos.y as i32 -margin;
 
-                let x = i + player.king_pos.x as i32 -margin;
-                let y = j + player.king_pos.y as i32 -margin;
-
-                let nums;
+                    let nums;
 
 
-                if x <0 || y <0 || x >= BOARD_SIZE || y >= BOARD_SIZE{
-                    nums = (-1,-1);
-                }else{
+                    if x <0 || y <0 || x >= BOARD_SIZE || y >= BOARD_SIZE{
+                        nums = (-1,-1);
+                    }else{
 
 
-                    let n = x + y * BOARD_SIZE as i32;
+                        let n = x + y * BOARD_SIZE as i32;
 
-                    let tile = self.board[n as usize];
+                        let tile = self.board[n as usize];
 
 
 
-                    nums = match tile{
-                        Tile::Empty=>{(0,0)}
-                        Tile::Taken(player, piece)=>{
-                            (
-                                player.0,
-                                piece.to_num() as i32
+                        nums = match tile{
+                            Tile::Empty=>{(0,0)}
+                            Tile::Taken(player, piece)=>{
+                                (
+                                    player.0,
+                                    piece.to_num() as i32
 
-                            )
-                        }
-                    };
+                                )
+                            }
+                        };
+                    }
+
+                    res[index] = nums;
+                    index+=1;
+
                 }
-
-                res[index] = nums;
-                index+=1;
-
             }
-        }
 
-        Some(GameState{
-            data:Vec::from(res),
-            offset:(player.king_pos.x,player.king_pos.y),
-            energy : player.energy,
-        })
+            let energy = player.energy + player.last_move_time.elapsed().as_secs_f32() * ENERGY_REGEN;
+
+
+            Some(GameState{
+                data:Vec::from(res),
+                offset:(player.king_pos.x,player.king_pos.y),
+                energy : energy,
+            })
         } else{
             None
         }  
