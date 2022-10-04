@@ -313,10 +313,14 @@ impl Game{
                         }
 
                         _=>{
-                            energy -= 1.;
 
                             
-                            self.piece_move(start_pos, end_pos, &player_id, piece)
+                            if self.piece_move(start_pos, end_pos, &player_id, piece){
+                                energy -= 1.;
+                                true
+                            }else{
+                                false
+                            }
                         }
                     }
                 }
