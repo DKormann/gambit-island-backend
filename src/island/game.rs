@@ -1,12 +1,12 @@
-#![allow(unused)]
+// #![allow(unused)]
 
 use std::collections::HashMap;
-use std::slice::Iter;
 use std::time;
 
-use rocket::response::status::NotFound;
 use tokio::sync::oneshot;
+use rand::Rng;
 
+use crate::GameMessage;
 use crate::GameState;
 
 
@@ -30,10 +30,10 @@ struct Pos{
 struct PosError;
 
 impl Pos{
-    fn from_num(n:i32) -> Pos{
+    // fn from_num(n:i32) -> Pos{
 
-        Pos{x:n %BOARD_SIZE , y : n / BOARD_SIZE ,n: n}
-    }
+    //     Pos{x:n %BOARD_SIZE , y : n / BOARD_SIZE ,n: n}
+    // }
     fn from_ints(x:i32, y:i32)-> Pos{
         Pos{
             x,
@@ -56,16 +56,21 @@ impl Pos{
     }
 }
 
-#[derive(Eq, Hash, PartialEq,Clone, Copy, Debug)]
-struct PlayerID (i32);
+#[derive(Eq, Hash, PartialEq,Clone, Debug)]
+struct PlayerID (String);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PlayerNumber(i32);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PlayerToken(u32);
+
 
 // #[derive(Clone, Copy)]
 pub struct Player{
     id: PlayerID,
     number: PlayerNumber,
+    token: PlayerToken,
     king_pos:Pos,
     energy: f32,
     last_move_time: time::Instant,
@@ -156,6 +161,7 @@ impl Tile{
 
 pub struct Game{
 
+    pub id : i32,
     players : HashMap<PlayerID, Player>,
     board : [Tile; (BOARD_SIZE * BOARD_SIZE) as usize],
     mover : Option<Player>,
@@ -163,8 +169,9 @@ pub struct Game{
 }
 
 impl Game{
-    pub fn new ()->Game{
+    pub fn new (id:i32)->Game{
         let mut res = Game {
+            id,
             players: HashMap::new(),
             board: [Tile::Empty;(BOARD_SIZE * BOARD_SIZE)as usize],
             mover: None,
@@ -172,17 +179,19 @@ impl Game{
         res
     }
 
-    pub fn add_player(&mut self,player_id:i32)->i32{
+    pub fn add_player(&mut self,player_id:String)->Result<GameMessage,String>{
 
 
         let id = PlayerID(player_id);
 
-        if self.players.contains_key(&id){
-            return -1
-        }
+        // if self.players.contains_key(&id){
+        //     return Err("Player allready present".to_string())
+        // }
 
+        let mut rng = rand::thread_rng();
 
         let num = self.players.len() as i32;
+        let token = PlayerToken(rng.gen::<u32>());
 
         let start_position = Pos::from_ints( 2,(num*2+2)%BOARD_SIZE);
 
@@ -193,9 +202,12 @@ impl Game{
 
         println!("adding king on field {}",start_position.n);
 
+
+
         let new_player = Player { 
-            id: PlayerID(player_id),
+            id: id.clone(),
             number: PlayerNumber(self.players.len() as i32),
+            token,
             king_pos:start_position,
             energy: 5.,
             last_move_time: time::Instant::now(),
@@ -206,7 +218,15 @@ impl Game{
         self.players.insert(id,new_player);
         
         let t  = time::Instant::now();
-        num
+
+        let mut playerlist  = vec![];
+        for (key,val) in  self.players.iter(){
+            playerlist.push((key.0.clone(), val.number.0, false));
+        }
+        
+        // Ok(GameJoinMessage { game_id: -1, your_num: num, ready: false, players: playerlist })
+        Ok(GameMessage::Join { game_id: self.id, number: num, token:token.0 })
+
     }
 
     pub fn is_open(&self)->bool{
@@ -214,11 +234,11 @@ impl Game{
         true
     }
 
-    pub fn get_player_by_id(&self,id:i32)->Option<&Player>{
+    pub fn get_player_by_id(&self,id:String)->Option<&Player>{
         self.players.get(&PlayerID(id))
     }
 
-    pub fn make_move(&mut self,player_id: i32,start:i32,end:i32,spawn:i32)->bool{   
+    pub fn make_move(&mut self,player_id: String,start:i32,end:i32,spawn:i32)->bool{   
 
         println!("trying to make move {} {} {} ",start,end,spawn);
 
@@ -244,7 +264,7 @@ impl Game{
             player.last_move_time = time::Instant::now();
 
 
-            energy += (time_diff * ENERGY_REGEN) ;
+            energy += time_diff * ENERGY_REGEN;
 
             energy = f32::min(energy, 10.);
 
@@ -253,7 +273,7 @@ impl Game{
             end_pos = player.relative_to_absolute(end);
 
         }else{
-            println!("failed to get player for {:?}",player_id);
+            println!("failed to get player for {:?}",&player_id);
             return false
         }
 
@@ -310,7 +330,7 @@ impl Game{
                                                 self.board[end_pos.n as usize] = self.board[start_pos.n as usize];
                                                 self.board[start_pos.n as usize] = Tile::Empty;
 
-                                                self.players.entry(player_id).and_modify(|player| {
+                                                self.players.entry(player_id.clone()).and_modify(|player| {
                                                     player.king_pos = target;
                                                 });
 
@@ -321,7 +341,7 @@ impl Game{
                                     }
                                     succ
                                 }
-                                _=> self.spawn_piece(&mut energy, spawn, end_pos, start_pos, player_id, player_num)
+                                _=> self.spawn_piece(&mut energy, spawn, end_pos, start_pos, player_id.clone(), player_num)
                             }
                         }
 
@@ -392,7 +412,7 @@ impl Game{
         return false
     }
 
-    pub fn request_update(&mut self, player_id:i32) -> Result<Option<GameState>,oneshot::Receiver<GameState>>{
+    pub fn request_update(&mut self, player_id:String) -> Result<Option<GameState>,oneshot::Receiver<GameState>>{
 
         let player_id = &PlayerID(player_id);
 

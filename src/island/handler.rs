@@ -4,7 +4,7 @@
 use rocket::response::status::NotFound;
 use tokio::sync::oneshot;
 
-use crate::GameState;
+use crate::{GameState, GameMessage};
 
 use super::game::Game;
 use std::{collections::HashMap};
@@ -28,46 +28,47 @@ impl MatchMaker {
     }
 
     
-    pub fn get_game(&mut self, player_id : i32) -> (i32,i32){
+    pub fn get_game(&mut self, username : String) -> Result<GameMessage,String>{
         
 
-        let num ;
+        let msg ;
 
         match &mut self.open_game{
             Some(session)=>{
 
                 if session.is_open(){
-                    num = session.add_player(player_id);
+                    msg = session.add_player(username);
 
                 }else {
-
-                    let mut new_game = Game::new();
-                    num = new_game.add_player(player_id);
+                    
+                    self.open_game_id +=1;
+                    let mut new_game = Game::new(self.open_game_id);
+                    msg = new_game.add_player(username);
 
                     let old_game = std::mem::replace(&mut self.open_game,Some(new_game));
 
                     if let Some(game) = old_game{
-                        self.running_games.insert(self.open_game_id,game);
+                        self.running_games.insert(game.id,game);
                     }
-                    self.open_game_id +=1;
 
                 }
             }
             None=>{
-                let mut open_game = Game::new();
-                num = open_game.add_player(player_id);
+                let mut open_game = Game::new(self.open_game_id);
+                msg = open_game.add_player(username);
                 self.open_game = Some(open_game);
                 self.open_game_id += 1;
             }
         }
-        
-        (self.open_game_id,num)
+
+        msg
+
 
     }
 
     
 
-    pub fn make_move(&mut self, _game_id: i32, player_id:i32 ,start:i32, end:i32,spawn:i32)->bool{
+    pub fn make_move(&mut self, _game_id: i32, player_id:String ,start:i32, end:i32,spawn:i32)->bool{
 
 
         match &mut self.open_game{
@@ -81,7 +82,7 @@ impl MatchMaker {
         }
     }
 
-    pub fn get_board_state(&mut self,_game_id: i32, player_id:i32)-> Result<Result<Option<GameState>, oneshot::Receiver<GameState>>,NotFound<String>>{
+    pub fn get_board_state(&mut self,_game_id: i32, player_id:String)-> Result<Result<Option<GameState>, oneshot::Receiver<GameState>>,NotFound<String>>{
         match &mut self.open_game{
             Some(game)=>{
 
