@@ -2,23 +2,18 @@
 
 use std::collections::HashMap;
 use std::time;
-
 use tokio::sync::oneshot;
 use rand::Rng;
-
 use crate::GameMessage;
-use crate::GameState;
-
 
 const BOARD_SIZE : i32 = 20;
 const VIEW_SIZE : i32 = 9 ;
 const VIEW_RADIUS: i32 =  VIEW_SIZE/2;
-
 const ENERGY_REGEN:f32 = 0.2;
-
 const DIAGONALS :[(i32, i32);4] = [(1,1),(-1,1),(1,-1),(-1,-1)];
 const STRAIGHTS : [(i32,i32);4] = [(1,0),(-1,0),(0,1),(0,-1)];
 const KNIGHTHOPS : [(i32,i32);8] = [(1,2),(2,1),(1,-2),(2,-1),(-1,-2),(-2,-1),(-1,2),(-2,1)];
+const MINPLAYERCOUNT : i32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Pos{
@@ -30,10 +25,8 @@ struct Pos{
 struct PosError;
 
 impl Pos{
-    // fn from_num(n:i32) -> Pos{
 
-    //     Pos{x:n %BOARD_SIZE , y : n / BOARD_SIZE ,n: n}
-    // }
+
     fn from_ints(x:i32, y:i32)-> Pos{
         Pos{
             x,
@@ -56,25 +49,25 @@ impl Pos{
     }
 }
 
-#[derive(Eq, Hash, PartialEq,Clone, Debug)]
-struct PlayerID (String);
+#[derive(Eq, PartialEq,Clone, Debug)]
+struct PlayerName (String);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PlayerNumber(i32);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct PlayerToken(u32);
+// #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+type PlayerToken = u32;
 
 
 // #[derive(Clone, Copy)]
 pub struct Player{
-    id: PlayerID,
+    id: PlayerName,
     number: PlayerNumber,
     token: PlayerToken,
     king_pos:Pos,
     energy: f32,
     last_move_time: time::Instant,
-    update_sender : Option<oneshot::Sender<GameState>>,
+    update_sender : Option<oneshot::Sender<GameMessage>>,
     view_changed : bool,
 }
 
@@ -87,8 +80,8 @@ impl Player{
         let king_pos = self.king_pos;
 
         Pos::from_ints(
-            relative_point.0+king_pos.x-VIEW_RADIUS -1 , 
-            relative_point.1+king_pos.y -VIEW_RADIUS -1,
+            relative_point.0+king_pos.x-VIEW_RADIUS , 
+            relative_point.1+king_pos.y -VIEW_RADIUS ,
         )
     }
 
@@ -102,6 +95,18 @@ impl Player{
             println!("cant see that far")
         }
         res
+    }
+
+    fn send_update(&mut self,msg:GameMessage){
+        match std::mem::replace(&mut self.update_sender, None){
+            Some( sender)=>{
+
+                _ = sender.send(msg);
+            }
+            None=>{
+                self.view_changed = true;
+            }
+        }
     }
 
 }
@@ -162,46 +167,44 @@ impl Tile{
 pub struct Game{
 
     pub id : i32,
-    players : HashMap<PlayerID, Player>,
+    players : HashMap<PlayerToken, Player>,
     board : [Tile; (BOARD_SIZE * BOARD_SIZE) as usize],
-    mover : Option<Player>,
+    running : bool,
 
 }
 
 impl Game{
+
     pub fn new (id:i32)->Game{
-        let mut res = Game {
+        let res = Game {
             id,
             players: HashMap::new(),
             board: [Tile::Empty;(BOARD_SIZE * BOARD_SIZE)as usize],
-            mover: None,
+            // mover: None,
+            running: false,
         };
         res
     }
 
     pub fn add_player(&mut self,player_id:String)->Result<GameMessage,String>{
 
+        if self.running{
+            panic!("cannot add player to running game")
+        }
 
-        let id = PlayerID(player_id);
-
-        // if self.players.contains_key(&id){
-        //     return Err("Player allready present".to_string())
-        // }
+        let id = PlayerName(player_id);
 
         let mut rng = rand::thread_rng();
 
         let num = self.players.len() as i32;
-        let token = PlayerToken(rng.gen::<u32>());
+        let token = rng.gen::<u32>();
 
         let start_position = Pos::from_ints( 2,(num*2+2)%BOARD_SIZE);
 
 
         self.board[start_position.n as usize] = Tile::Taken(PlayerNumber(num), Piece::King);
-        self.update_views(start_position,start_position);
-
 
         println!("adding king on field {}",start_position.n);
-
 
 
         let new_player = Player { 
@@ -215,30 +218,58 @@ impl Game{
             view_changed:true,
         };
 
-        self.players.insert(id,new_player);
+        self.players.insert(token,new_player);
         
-        let t  = time::Instant::now();
+        // let t  = time::Instant::now();
+        let lobby = self.get_lobby_info();
+        self.broadcast(lobby);
 
-        let mut playerlist  = vec![];
-        for (key,val) in  self.players.iter(){
-            playerlist.push((key.0.clone(), val.number.0, false));
+        Ok(GameMessage::Join { game_id: self.id, number: num, token:token })
+
+    }
+
+    pub fn start(&mut self, token: u32)->String{
+
+        if ! self.players.contains_key(&token){
+            return "token error".to_string()
         }
-        
-        // Ok(GameJoinMessage { game_id: -1, your_num: num, ready: false, players: playerlist })
-        Ok(GameMessage::Join { game_id: self.id, number: num, token:token.0 })
 
+        if self.players.len() as i32 <= MINPLAYERCOUNT{
+            return "not enough players".to_string()
+        }
+
+        self.running = true;
+
+        let mut tokens : Vec<_> = vec![];
+
+        for player in self.players.values(){
+            tokens.push(player.token);
+        }
+        for tok in tokens{
+            self.update_player_view(&tok);
+        }
+        "OK".to_string()
+    }
+
+    pub fn get_lobby_info(&self)-> GameMessage{
+
+        let mut player_list = vec![];
+
+        for player in self.players.values(){
+            player_list.push((player.id.0.clone(),player.number.0))
+        }
+
+        GameMessage::Lobby { players: player_list }
+        
     }
 
     pub fn is_open(&self)->bool{
         // self.players.len() < 10
-        true
+        ! self.running
     }
 
-    pub fn get_player_by_id(&self,id:String)->Option<&Player>{
-        self.players.get(&PlayerID(id))
-    }
+    pub fn make_move(&mut self,token: u32,start:i32,end:i32,spawn:i32)->bool{   
 
-    pub fn make_move(&mut self,player_id: String,start:i32,end:i32,spawn:i32)->bool{   
 
         println!("trying to make move {} {} {} ",start,end,spawn);
 
@@ -246,15 +277,15 @@ impl Game{
             return false
         }
 
-        let mut energy=0.0;
+        let mut energy;
         
-        let player_id = PlayerID(player_id);
-        let mut player_num:PlayerNumber = PlayerNumber(-1);
+        let token = token;
+        let player_num:PlayerNumber;
 
         let start_pos:Pos;
         let end_pos:Pos;
 
-        if let Some(player) = self.players.get_mut(&player_id){
+        if let Some(player) = self.players.get_mut(&token){
 
             player.view_changed = true;
             player_num = player.number;
@@ -272,14 +303,16 @@ impl Game{
             start_pos = player.relative_to_absolute(start);
             end_pos = player.relative_to_absolute(end);
 
+            println!("real move {:?} {:?} ", start_pos, end_pos);
+
         }else{
-            println!("failed to get player for {:?}",&player_id);
+            println!("failed to get player for {:?}",&token);
             return false
         }
 
         if energy < 1. {
             println!("no energy");
-            self.players.entry(player_id).and_modify(|p|{
+            self.players.entry(token).and_modify(|p|{
                 p.energy = energy;
             });
 
@@ -330,7 +363,7 @@ impl Game{
                                                 self.board[end_pos.n as usize] = self.board[start_pos.n as usize];
                                                 self.board[start_pos.n as usize] = Tile::Empty;
 
-                                                self.players.entry(player_id.clone()).and_modify(|player| {
+                                                self.players.entry(token.clone()).and_modify(|player| {
                                                     player.king_pos = target;
                                                 });
 
@@ -341,14 +374,14 @@ impl Game{
                                     }
                                     succ
                                 }
-                                _=> self.spawn_piece(&mut energy, spawn, end_pos, start_pos, player_id.clone(), player_num)
+                                _=> self.spawn_piece(&mut energy, spawn, end_pos, start_pos, token.clone(), player_num)
                             }
                         }
 
                         _=>{
 
                             
-                            if self.piece_move(start_pos, end_pos, &player_id, piece){
+                            if self.piece_move(start_pos, end_pos, &token, piece){
                                 energy -= 1.;
                                 true
                             }else{
@@ -366,7 +399,7 @@ impl Game{
             }
 
         };
-        self.players.entry(player_id).and_modify(|p|{
+        self.players.entry(token).and_modify(|p|{
             p.energy = energy;
         });
 
@@ -377,7 +410,7 @@ impl Game{
     
     }
 
-    fn spawn_piece(&mut self, energy: &mut f32, spawn: i32, end_pos: Pos, start_pos: Pos, player_id: PlayerID, player_num: PlayerNumber) -> bool {
+    fn spawn_piece(&mut self, energy: &mut f32, spawn: i32, end_pos: Pos, start_pos: Pos, token: PlayerToken, player_num: PlayerNumber) -> bool {
         let piece = Piece::from_num(spawn);
         println!("spaning {:?}",piece);
         
@@ -392,7 +425,7 @@ impl Game{
 
         
 
-        if self.board[end_pos.n as usize] == Tile::Empty && self.move_is_possible(start_pos, end_pos, &player_id, piece){
+        if self.board[end_pos.n as usize] == Tile::Empty && self.move_is_possible(start_pos, end_pos, &token, piece){
     
             self.board[end_pos.n as usize] = Tile::Taken(player_num, piece);
             true
@@ -401,8 +434,8 @@ impl Game{
         }
     }
 
-    fn piece_move(&mut self, start: Pos, end: Pos, player_id: &PlayerID, piece: Piece) -> bool {
-        if self.move_is_possible(start, end, player_id, piece){
+    fn piece_move(&mut self, start: Pos, end: Pos, token: &PlayerToken, piece: Piece) -> bool {
+        if self.move_is_possible(start, end, token, piece){
 
             self.board[end.n as usize] = self.board[start.n as usize];
             self.board[start.n as usize] = Tile::Empty;
@@ -412,24 +445,39 @@ impl Game{
         return false
     }
 
-    pub fn request_update(&mut self, player_id:String) -> Result<Option<GameState>,oneshot::Receiver<GameState>>{
+    pub fn request_update(&mut self, player_token:u32) -> Result<Option<GameMessage>,oneshot::Receiver<GameMessage>>{
 
-        let player_id = &PlayerID(player_id);
+        let token = player_token;
 
-        match self.players.get(player_id){
-            Some(player)=>{
+        match self.players.get_mut(&token){
+            Some(mut player)=>{
 
 
                 if player.view_changed{
+                    player.view_changed = false;
 
-                    let gs = self.get_current_view(player_id);
+                    if !self.running{
+                        let mut playerlist  = vec![];
+                        for (_,val) in  self.players.iter(){
+                            playerlist.push((val.id.0.clone(), val.number.0));
+                        } 
+                        Ok(Some(
+                            
+                            GameMessage::Lobby{
+                                players:playerlist
+                            }
+                        ))
+                    }else{
 
-                    Ok(gs)
+                        let gs = self.get_current_view(&token);
+
+                        Ok(gs)
+                    }
 
                 }else{
                     let (s,r) = oneshot::channel();
 
-                    let otp = self.players.get_mut(player_id);
+                    let otp = self.players.get_mut(&token);
                     if let Some(p) = otp{
                         p.update_sender = Some(s)
                     }
@@ -439,58 +487,61 @@ impl Game{
 
             }
             None=>{
+                //player not part of this game
                 Ok(None)
             }
         }
 
     }
 
+    fn broadcast(&mut self, msg: GameMessage){
+
+        for player in self.players.values_mut(){
+            player.send_update(msg.clone())
+        }
+
+    }
+
     fn update_views(&mut self,start:Pos, end: Pos){
 
-        let mut ids = vec![];
 
+        let mut tokens :Vec<PlayerToken> = vec![];
+        
         for player in self.players.values(){
             if  ((player.king_pos.x - end.x).abs() <= VIEW_RADIUS &&
                 (player.king_pos.y - end.y).abs() <= VIEW_RADIUS) ||
                 ((player.king_pos.x - start.x).abs() <= VIEW_RADIUS &&
                 (player.king_pos.y - start.y).abs() <= VIEW_RADIUS)
             {
-                ids.push(player.id.clone());
+                tokens.push(player.token.clone());
             }
         }
-
-        for id in ids{
+        for id in tokens{
             self.update_player_view(&id);
         }
 
+
     }
 
-    fn update_player_view(&mut self, player_id: &PlayerID ){
-
+    fn update_player_view(&mut self, token: &PlayerToken ){
 
         // let owned_sender : Option<oneshot::Sender<GameState>>;
 
-        if let Some(view) = self.get_current_view(player_id){
+        if let Some(view) = self.get_current_view(token){
+            self.players.entry(token.clone()).and_modify(|player|{
 
+                player.send_update(view);
 
-            self.players.entry(player_id.clone()).and_modify(|player|{
-                println!("uvse: {} ",player.energy);
-                if let Some(sender) = std::mem::replace(&mut player.update_sender, None){
-                    sender.send(view);
-                }else{
-                    player.view_changed = true;
-                }
-                println!("uvee: {}",player.energy);
             });
 
         }
     }
 
-    fn get_current_view(&mut self, player_id: &PlayerID)->Option<GameState>{
+    fn get_current_view(&mut self, token: &PlayerToken)->Option<GameMessage>{
         // let player = self.players.get_mut(&PlayerID(player));
         // let player = player.unwrap();
 
-        if let Some(player) = self.players.get_mut(player_id){
+        if let Some(player) = self.players.get_mut(token){
 
             player.view_changed = false;
 
@@ -540,20 +591,16 @@ impl Game{
             let energy = player.energy + player.last_move_time.elapsed().as_secs_f32() * ENERGY_REGEN;
 
 
-            Some(GameState{
-                data:Vec::from(res),
-                offset:(player.king_pos.x,player.king_pos.y),
-                energy : energy,
-            })
+            Some(GameMessage::State { data: Vec::from(res), offset: (player.king_pos.x,player.king_pos.y), energy: energy })
         } else{
             None
         }  
 
     }
 
-    fn move_is_possible(&self, start:Pos,end:Pos,player_id:&PlayerID,piece:Piece)->bool{
+    fn move_is_possible(&self, start:Pos,end:Pos,token:&PlayerToken,piece:Piece)->bool{
 
-        if let Some(player) = self.players.get(player_id){
+        if let Some(player) = self.players.get(token){
             println!("move possible?");
             match piece{
                 Piece::Knight=>{
@@ -661,8 +708,6 @@ impl Game{
         false
 
     }
-
-    
 
 }
 

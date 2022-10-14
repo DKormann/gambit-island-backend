@@ -5,7 +5,8 @@
 use rocket::response::status::NotFound;
 use rocket::{State, serde::json::Json};
 use serde::{Serialize};
-use tokio::sync::oneshot;
+// use tokio::sync::oneshot;
+
 
 use std::sync::{Arc, Mutex};
 // use std::env;
@@ -50,12 +51,7 @@ type DB = Arc<database::DBApi>;
 async fn main()->Result<(), rocket::Error>{
 
 
-    // let name = "SUPABASE_SECRET";
-    // let secret = env::var(name).expect("$USER not set");
     
-
-
-
 
     let bank:Bank = Arc::new( Mutex::new(MatchMaker::new()));
 
@@ -65,13 +61,13 @@ async fn main()->Result<(), rocket::Error>{
 
     let _rocket = rocket::build()
     .mount("/", routes![
-        // get_game,
-        get_state,
+
         make_move,
         register,
         login,
         join_game,
         get_update,
+        start_game,
         ])
     .manage(bank)
     .manage(mm)
@@ -145,7 +141,7 @@ async fn join_game(username: String, passhash: String, api: &State<DB>, bank: &S
 }
 
 
-#[derive(Serialize)]
+#[derive(Serialize,Clone,Debug)]
 pub enum GameMessage{
     Join{
         game_id: i32,
@@ -166,21 +162,21 @@ pub enum GameMessage{
 #[get("/api/get_update/<game_id>/<player_token>")]
 async fn get_update ( game_id:i32, player_token:u32,bank :&State<Bank>) -> Result<Json<GameMessage>, NotFound<String>>{
 
-
     let res ;
+
     {
         let mut mm = bank.lock().or_else(|_|{
             return Err(NotFound("cant get lock".to_string()))
         })?;
 
-        res = mm.get_board_state(game_id, player_token.to_string()).or_else(|_|{
+        res = mm.get_board_state(game_id, player_token).or_else(|_|{
             return Err (NotFound("cant get game update".to_string()))
         })?;
     }
 
     let listener = match res{
-        Ok(Some(gs))=>{
-            let gmsg = GameMessage::State { data: gs.data, offset: gs.offset, energy: gs.energy };
+        Ok(Some(gmsg))=>{
+
             return Ok(Json(gmsg))
         },
         Ok(None)=>{
@@ -194,8 +190,11 @@ async fn get_update ( game_id:i32, player_token:u32,bank :&State<Bank>) -> Resul
 
     match listener.await{
 
-        Ok(_)=>{
-            Err(NotFound("cant find update".into()))
+        Ok(msg)=>{
+
+            println!("deliver update {:?}",msg);
+
+            Ok(Json(msg))
 
         }
         Err(_)=>{
@@ -207,7 +206,12 @@ async fn get_update ( game_id:i32, player_token:u32,bank :&State<Bank>) -> Resul
 
 }
 
-
+#[get("/api/start_game/<game_id>/<player_token>")]
+async fn start_game(game_id:i32, player_token:u32,bank : &State<Bank>) -> String {
+    println!("starting game {}",player_token);
+    let mut mm = bank.lock().expect("cannot get bank lock");
+    mm.start_game(game_id, player_token)
+}
 
 #[derive(Serialize)]
 pub struct GameState{
@@ -216,64 +220,25 @@ pub struct GameState{
     energy : f32,
 }
 
-#[get("/api/get_state/<game_id>/<player_id>")]
-async fn get_state (game_id:i32, player_id:String,bank: &State<Bank>) -> Result<Json<impl Serialize>,NotFound<String>>{
 
-    let listener : oneshot::Receiver<GameState>;
-    match bank.lock(){
-        Ok(mut mm)=>{
-            
-            let future = mm.get_board_state(game_id, player_id);
-            match  future{
-                Ok(req)=>{
+#[post("/api/make_move/<game_id>/<player_token>/<start>/<end>/<spawn>")]
+async fn make_move(
+    game_id:i32,
+    player_token:u32,
+    start:i32,
+    end:i32,
+    spawn:i32,
+    bank:&State<Bank>)->Json<bool>{
 
-                    match req{
-                        Ok(Some(gs))=>{
-                            return Ok(Json(gs))
 
-                        },
-                        Ok(None)=>{
-                            return Err(NotFound("cant find player for this game".into()))
-                        }
-                        Err(o)=>{
-                            listener = o;
-                        }
-                    }
-
-                }
-                Err(_)=>{
-                    return Err(NotFound("cant get game update".to_string()));
-                }
-            }
-        }
-        Err(_)=>{
-            println!("failed to get match maker");
-            return  Err(NotFound("not found".to_string()));
-        }
-    }
-
-    // sleep(Duration::from_secs(1)).await;
-
-    match listener.await{
-        Ok(gs)=>{
-            Ok(Json(gs))
-        }
-        Err(_)=>{
-            Err(NotFound("game transmission faied".into()))
-        }
-    }
-
-}
-
-#[post("/api/make_move/<game_id>/<player_id>/<start>/<end>/<spawn>")]
-async fn make_move(game_id:i32,player_id:String,start:i32,end:i32,spawn:i32,bank:&State<Bank>)->Json<bool>{
     let res = match bank.lock(){
         Ok(mut mm)=>{
 
-            mm.make_move(game_id, player_id, start, end, spawn);
+            mm.make_move(game_id, player_token, start, end, spawn);
             true
         }
         _=>{false}
     };
     Json(res)
 }
+

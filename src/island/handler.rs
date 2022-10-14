@@ -4,7 +4,7 @@
 use rocket::response::status::NotFound;
 use tokio::sync::oneshot;
 
-use crate::{GameState, GameMessage};
+use crate::{GameMessage};
 
 use super::game::Game;
 use std::{collections::HashMap};
@@ -27,7 +27,6 @@ impl MatchMaker {
         }
     }
 
-    
     pub fn get_game(&mut self, username : String) -> Result<GameMessage,String>{
         
 
@@ -66,15 +65,24 @@ impl MatchMaker {
 
     }
 
-    
+    pub fn start_game(&mut self, _game_id: i32, token: u32)->String{
 
-    pub fn make_move(&mut self, _game_id: i32, player_id:String ,start:i32, end:i32,spawn:i32)->bool{
+        
+
+        let game = self.open_game.as_mut().expect("expects open game to exist in order to start game");
+
+        
+        game.start(token)
+
+    }   
+
+    pub fn make_move(&mut self, _game_id: i32, token:u32 ,start:i32, end:i32,spawn:i32)->bool{
 
 
         match &mut self.open_game{
             Some( game)=>{
 
-                game.make_move(player_id, start, end, spawn)
+                game.make_move(token, start, end, spawn)
             }
             _=>{
                 false
@@ -82,13 +90,13 @@ impl MatchMaker {
         }
     }
 
-    pub fn get_board_state(&mut self,_game_id: i32, player_id:String)-> Result<Result<Option<GameState>, oneshot::Receiver<GameState>>,NotFound<String>>{
+    pub fn get_board_state(&mut self,_game_id: i32, player_token:u32)-> Result<Result<Option<GameMessage>, oneshot::Receiver<GameMessage>>,NotFound<String>>{
         match &mut self.open_game{
             Some(game)=>{
 
                 // game.get_update(player_id)
 
-                let req = game.request_update(player_id);
+                let req = game.request_update(player_token);
 
                 Ok(req)
 
