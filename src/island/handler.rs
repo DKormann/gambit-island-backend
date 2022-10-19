@@ -4,7 +4,7 @@
 use rocket::response::status::NotFound;
 use tokio::sync::oneshot;
 
-use crate::{GameMessage};
+use crate::{GameMessage, MoveResult};
 
 use super::game::Game;
 use std::{collections::HashMap};
@@ -14,96 +14,83 @@ pub struct MatchMaker{
 
     running_games: HashMap<i32,Game>,
     open_game_id : i32 ,
-    open_game : Option< Game>,
-
 }
 
 impl MatchMaker {
+
     pub fn new()->Self{
-        MatchMaker { 
+        let mut res = MatchMaker { 
             running_games:HashMap::new(),
-            open_game_id:0,
-            open_game:None,
-        }
+            open_game_id:-1,
+        };
+        res.create_new_game();
+        res
     }
 
-    pub fn get_game(&mut self, username : String) -> Result<GameMessage,String>{
-        
+    pub fn create_new_game(&mut self) -> &mut Game {
+        self.open_game_id += 1;
+        let game = Game::new(self.open_game_id);
+        self.running_games.insert(game.id, game);
 
-        let msg ;
+        self.running_games.get_mut(&self.open_game_id).expect("cant find game that was just added (prob impossible)")
+    }
 
-        match &mut self.open_game{
-            Some(session)=>{
+    pub fn get_game(&mut self, username : String, score: i32) -> Result<GameMessage,String>{
 
-                if session.is_open(){
-                    msg = session.add_player(username);
+        let g = self.running_games.get_mut(&self.open_game_id);
 
-                }else {
-                    
-                    self.open_game_id +=1;
-                    let mut new_game = Game::new(self.open_game_id);
-                    msg = new_game.add_player(username);
+        if let Some(game) = g{
+            if game.is_open(){
+                return game.add_player(username,score)
+            }
+        }
 
-                    let old_game = std::mem::replace(&mut self.open_game,Some(new_game));
+        self.create_new_game();
 
-                    if let Some(game) = old_game{
-                        self.running_games.insert(game.id,game);
-                    }
+        self.running_games.get_mut(&self.open_game_id).expect("cant get created game").add_player(username,score)
 
-                }
+    }
+
+    pub fn start_game(&mut self, _game_id: i32, token: u32) -> Result<(),String>{
+
+        match self.running_games.get_mut(&_game_id){
+            Some(game)=>{
+                return game.start(token)
             }
             None=>{
-                let mut open_game = Game::new(self.open_game_id);
-                msg = open_game.add_player(username);
-                self.open_game = Some(open_game);
-                self.open_game_id += 1;
+                return Err("cant get game".to_owned())
             }
         }
-
-        msg
-
-
-    }
-
-    pub fn start_game(&mut self, _game_id: i32, token: u32)->String{
-
         
-
-        let game = self.open_game.as_mut().expect("expects open game to exist in order to start game");
-
-        
-        game.start(token)
-
     }   
 
-    pub fn make_move(&mut self, _game_id: i32, token:u32 ,start:i32, end:i32,spawn:i32)->bool{
+    pub fn make_move(&mut self, game_id: i32, token:u32 ,start:i32, end:i32,spawn:i32)->MoveResult{
 
+        let game = self.running_games.get_mut(&game_id);
 
-        match &mut self.open_game{
+        match game{
             Some( game)=>{
-
                 game.make_move(token, start, end, spawn)
             }
             _=>{
-                false
+                MoveResult::Fail
             }
         }
     }
 
+    pub fn take_game(&mut self, game_id:i32)->Option<Game>{
+        let g = self.running_games.remove(&game_id);
+        g
+    }
+
     pub fn get_board_state(&mut self,_game_id: i32, player_token:u32)-> Result<Result<Option<GameMessage>, oneshot::Receiver<GameMessage>>,NotFound<String>>{
-        match &mut self.open_game{
+
+        match self.running_games.get_mut(&_game_id){
             Some(game)=>{
-
-                // game.get_update(player_id)
-
-                let req = game.request_update(player_token);
-
-                Ok(req)
-
+                Ok(game.request_update(player_token))
             }
             None=>{
-                println!("no game found.");
-                Err(NotFound("not a game.".to_string()))
+                Err(NotFound("cant get game".to_owned()))
             }
         }
     }

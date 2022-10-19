@@ -51,13 +51,13 @@ type DB = Arc<database::DBApi>;
 async fn main()->Result<(), rocket::Error>{
 
 
-    
+    let api = database::get_api();
 
     let bank:Bank = Arc::new( Mutex::new(MatchMaker::new()));
 
-    let db:DB = Arc::new(database::get_api());
+    let db:DB = Arc::new(api);
 
-    let mm = MatchMaker::new();
+
 
     let _rocket = rocket::build()
     .mount("/", routes![
@@ -70,7 +70,6 @@ async fn main()->Result<(), rocket::Error>{
         start_game,
         ])
     .manage(bank)
-    .manage(mm)
     .manage(db)
     .attach(CORS)
     
@@ -124,17 +123,18 @@ pub struct GameJoinMessage{
 #[get ("/api/join_game/<username>/<passhash>")]
 async fn join_game(username: String, passhash: String, api: &State<DB>, bank: &State<Bank>)-> Result<Json<GameMessage>,String>{
 
-
     println!("join game request from {} {}",username,passhash);
 
     //check user creds
     if ! database::check_user_credentials(&username, &passhash, &api.secret)
-        .await.or_else(|e| {Err(e)})?{
-            return Err("authentication failed.".to_string())
-        }
+    .await.or_else(|e| {Err(e)})?{
+        return Err("authentication failed.".to_string())
+    }
+
+    let score = database::get_player_score(&username, &api.secret).await.or_else(|e|{Err(format!("cant get score {:?}",e))})?;
     
     let mut matchmaker = bank.lock().or_else(|e|{Err(format!("error getting matchmaker {}",e.to_string()))})?;
-    let res = matchmaker.get_game(username);
+    let res = matchmaker.get_game(username,score);
 
     res.and_then(|gmsg|{Ok(Json(gmsg))})
 
@@ -155,6 +155,12 @@ pub enum GameMessage{
         data: Vec<(i32,i32)>,
         offset: (i32,i32),
         energy: f32,
+        got_treasure : bool,
+        treasure_holder : i32,
+    },
+    End{
+        winning_number: i32,
+        value: i32,
     }
 }
 
@@ -210,16 +216,19 @@ async fn get_update ( game_id:i32, player_token:u32,bank :&State<Bank>) -> Resul
 async fn start_game(game_id:i32, player_token:u32,bank : &State<Bank>) -> String {
     println!("starting game {}",player_token);
     let mut mm = bank.lock().expect("cannot get bank lock");
-    mm.start_game(game_id, player_token)
+    if let Err(msg) = mm.start_game(game_id, player_token){
+        msg
+    }else{
+        "Ok".to_string()
+    }
 }
 
 #[derive(Serialize)]
-pub struct GameState{
-    data : Vec<(i32,i32)>,
-    offset :(i32,i32),
-    energy : f32,
+pub enum MoveResult{
+    Fail,
+    Success,
+    End{winner: i32},
 }
-
 
 #[post("/api/make_move/<game_id>/<player_token>/<start>/<end>/<spawn>")]
 async fn make_move(
@@ -228,17 +237,40 @@ async fn make_move(
     start:i32,
     end:i32,
     spawn:i32,
-    bank:&State<Bank>)->Json<bool>{
+    api: &State<DB>,
+    bank:&State<Bank>)->Json<MoveResult>{
 
+    // let mut res= MoveResult::Fail;
 
     let res = match bank.lock(){
         Ok(mut mm)=>{
 
-            mm.make_move(game_id, player_token, start, end, spawn);
-            true
+            mm.make_move(game_id, player_token, start, end, spawn)
+
         }
-        _=>{false}
+        _=>{
+            MoveResult::Fail
+        }
     };
+
+    match res{
+        MoveResult::End{winner}=>{
+
+            let g = match bank.lock(){
+                Ok(mut mm)=>{
+                    mm.take_game(game_id)
+                }
+                _=>{None}
+            };
+
+            if let Some(mut game) = g{
+                game.end(&api.secret,winner).await
+            }
+        }
+        _=>{}
+    }
+
+    
     Json(res)
 }
 

@@ -71,7 +71,90 @@ pub async fn check_user_credentials (username: &str, passhash: &str, secret: &St
     }else{
         Ok(true)
     }
+}
+
+pub async fn get_player_score(username: &str, secret: &String)->Result<i32,String>{
+
+    let client = Postgrest::new(REST_URL)
+        .insert_header("apikey", &secret)
+        .insert_header("Authorization", format!("Bearer {}",&secret));
+
     
+
+
+    let score = client.from("pirate_gambit_scores")
+    .eq("username", &username)
+    .select("score")
+    .execute().await.or_else(|e|{Err(format!("error getting score for id {} {:?}",&username,e))})?
+    .text().await.or_else(|_|{Err(format!("cant get text"))})?;
+    
+
+    if score == "[]".to_string(){
+
+        println!("inserting new score ");
+
+        let id = get_id(&username, &secret).await?;
+
+        let payload = format!(r#"[{{"id":"{}","username":"{}", "score":"{}"}}]"#,&id,username,100);
+
+        client.from("pirate_gambit_scores")
+        .insert(payload)
+        .execute().await.or_else(|x|{Err(format!("cant execure query {:?}",x))})?
+        .text().await.or_else(|_|{Err(format!("catnt get text"))})?;
+
+        Ok(100)
+
+    }else{
+
+        let mut splits = score.split(":");
+        splits.next();
+        let score = splits.next().unwrap().split("}").next().unwrap();
+
+
+        let res = score.parse::<i32>().or_else(|e|{Err(format!("cant parse score {} {:?}",score,e))})?;
+
+        Ok(res)
+    }
+
+}
+
+pub async fn get_id(username: &str, secret: &String)->Result<String,String>{
+    let client = Postgrest::new(REST_URL)
+        .insert_header("apikey", &secret)
+        .insert_header("Authorization", format!("Bearer {}",&secret));
+
+    let id = client.from("users")
+    .eq("username" ,username)
+    .select("id")
+    .execute()
+    .await.or_else(|x|{Err(format!("error getting user id {:?}",x))})?
+    .text().await.or_else(|e|{Err(format!("error getting text {:?}",e))})?;
+
+
+    //parsing id from answer like [{id: 32}
+    let mut splits = id.split(":");
+    splits.next();
+    let id = splits.next().unwrap();
+    splits = id.split("}");
+    Ok(splits.next().unwrap().to_owned())
+
+}
+
+pub async fn set_player_score(username: &str, value: i32, secret: &String)->Result<(),String>{
+
+    let client = Postgrest::new(REST_URL)
+        .insert_header("apikey", &secret)
+        .insert_header("Authorization", format!("Bearer {}",&secret));
+    
+    let id = get_id(username, secret).await?;
+    
+    let payload = format!(r#"[{{"score":"{}"}}]"#, value);
+
+    client.from("pirate_gambit_scores")
+    .eq("id",id)
+    .update(payload)
+    .execute().await.or_else(|_|{Err(format!("cant execute score update"))})?;
+    Ok(())
 
 }
 
