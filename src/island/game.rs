@@ -16,6 +16,7 @@ const DIAGONALS :[(i32, i32);4] = [(1,1),(-1,1),(1,-1),(-1,-1)];
 const STRAIGHTS : [(i32,i32);4] = [(1,0),(-1,0),(0,1),(0,-1)];
 const KNIGHTHOPS : [(i32,i32);8] = [(1,2),(2,1),(1,-2),(2,-1),(-1,-2),(-2,-1),(-1,2),(-2,1)];
 const MINPLAYERCOUNT : i32 = 2;
+const MAXPLAYERCOUNT : i32 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Pos{
@@ -237,6 +238,10 @@ impl Game{
         // let t  = time::Instant::now();
         let lobby = self.get_lobby_info();
         self.broadcast(lobby);
+
+        if self.players.len() as i32 >= MAXPLAYERCOUNT{
+            self.start(token)?
+        }
 
         Ok(GameMessage::Join { game_id: self.id, number: num, token:token })
 
