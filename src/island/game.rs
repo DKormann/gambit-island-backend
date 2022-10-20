@@ -259,6 +259,10 @@ impl Game{
             return Err("not enough players to start game".to_string())
         }
 
+        if self.running{
+            return Ok(())
+        }
+
         self.running = true;
 
         let mut tokens : Vec<_> = vec![];
@@ -313,7 +317,7 @@ impl Game{
 
     pub fn is_open(&self)->bool{
         // self.players.len() < 10
-        ! self.running
+        (! self.running ) || self.players.len() as i32 >= MAXPLAYERCOUNT
     }
 
     pub fn make_move(&mut self,token: u32,start:i32,end:i32,spawn:i32)->MoveResult{   
