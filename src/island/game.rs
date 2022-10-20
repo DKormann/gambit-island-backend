@@ -313,7 +313,7 @@ impl Game{
 
     pub fn is_open(&self)->bool{
         // self.players.len() < 10
-        (! self.running ) || self.players.len() as i32 >= MAXPLAYERCOUNT
+        (! self.running ) && self.players.len() as i32 >= MAXPLAYERCOUNT
     }
 
     pub fn make_move(&mut self,token: u32,start:i32,end:i32,spawn:i32)->MoveResult{   
