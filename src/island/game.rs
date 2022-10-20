@@ -239,10 +239,6 @@ impl Game{
         let lobby = self.get_lobby_info();
         self.broadcast(lobby);
 
-        if self.players.len() as i32 >= MAXPLAYERCOUNT{
-            self.start(token)?
-        }
-
         Ok(GameMessage::Join { game_id: self.id, number: num, token:token })
 
     }
