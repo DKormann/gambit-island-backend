@@ -1,7 +1,10 @@
 // #![allow(unused)]
 
+
 use std::{collections::HashMap};
 use std::time;
+use rocket::response::status::NotFound;
+use serde::Serialize;
 use tokio::sync::oneshot;
 use rand::Rng;
 use crate::{GameMessage, MoveResult, database};
@@ -17,6 +20,7 @@ const STRAIGHTS : [(i32,i32);4] = [(1,0),(-1,0),(0,1),(0,-1)];
 const KNIGHTHOPS : [(i32,i32);8] = [(1,2),(2,1),(1,-2),(2,-1),(-1,-2),(-2,-1),(-1,2),(-2,1)];
 const MINPLAYERCOUNT : i32 = 2;
 const MAXPLAYERCOUNT : i32 = 6;
+const MOVE_DELAY: f32 = 0.15;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Pos{
@@ -55,7 +59,7 @@ impl Pos{
 #[derive(Eq, PartialEq,Clone, Debug)]
 struct PlayerName (String);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq,Serialize)]
 struct PlayerNumber(i32);
 
 // #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -67,7 +71,7 @@ pub struct Player{
     id: PlayerName,
     number: PlayerNumber,
     token: PlayerToken,
-    score: i32,
+    value: i32,
     king_pos:Pos,
     energy: f32,
     got_treasure : bool,
@@ -109,14 +113,16 @@ impl Player{
                 _ = sender.send(msg);
             }
             None=>{
+
                 self.view_changed = true;
+
             }
         }
     }
 
 }
 
-#[derive(Clone, Copy, Debug,PartialEq)]
+#[derive(Clone, Copy, Debug,PartialEq,Serialize)]
 enum Piece{
     King,
     Rook,
@@ -128,6 +134,7 @@ enum Piece{
 
 impl Piece{
     fn from_num(num:i32)->Piece{
+
         match num{
             1=>Piece::King,
             2=>Piece::Queen,
@@ -138,7 +145,8 @@ impl Piece{
             _=>{panic!{"cant convert {} to piece",num}},
         }
     }
-    fn to_num(&self)->usize{
+
+    fn _to_num(&self)->usize{
         match self{
             Piece::King=>1,
             Piece::Queen=>2,
@@ -148,6 +156,7 @@ impl Piece{
             Piece::Pawn=>6,
         }
     }
+
     fn get_cost(&self)->u32{
         match self{
             Piece::King=>{panic!("cant take cost of king")},
@@ -160,14 +169,26 @@ impl Piece{
     }
 }
 
-#[derive(Clone, Copy,Debug,PartialEq)]
-enum Tile{
-    Empty,
-    Taken( PlayerNumber,Piece),
-    Treasure,
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Tile{
+    ground:TileGround,
+    status: TileStatus,
 }
 
-impl Tile{
+
+#[derive(Clone,Copy,Debug, PartialEq, Serialize)]
+enum TileGround{
+    Ground,
+    Safe,
+    Treasure,
+    // Water,
+}
+
+#[derive(Clone, Copy,Debug,PartialEq,Serialize)]
+enum TileStatus{
+    Empty,
+    Taken( PlayerNumber,Piece),
 }
 
 pub struct Game{
@@ -175,11 +196,18 @@ pub struct Game{
     pub id : i32,
     players : HashMap<PlayerToken, Player>,
     board : [Tile; (BOARD_SIZE * BOARD_SIZE) as usize],
-    running : bool,
     value : i32,
     conclusion : Option<GameMessage>,
     treasure_holder: Option<PlayerNumber>,
+    treasure_position: Option<i32>,
+    status : GameStatus,
+}
 
+#[derive(PartialEq)]
+pub enum GameStatus{
+    Lobby,
+    Running,
+    Finished,
 }
 
 impl Game{
@@ -188,20 +216,26 @@ impl Game{
         let mut res = Game {
             id,
             players: HashMap::new(),
-            board: [Tile::Empty;(BOARD_SIZE * BOARD_SIZE)as usize],
-            running: false,
+            // board: [TileStatus::Empty;(BOARD_SIZE * BOARD_SIZE)as usize],
+            board: [Tile{ground:TileGround::Ground, status:TileStatus::Empty};(BOARD_SIZE * BOARD_SIZE)as usize],
             value: 0,
             conclusion:None,
             treasure_holder:None,
+            treasure_position : Some(TREASURE_TILE),
+            status:GameStatus::Lobby,
 
         };
-        res.board[TREASURE_TILE as usize] = Tile::Treasure;
+        for i in 0..BOARD_SIZE{
+            let pos = Pos::from_ints(0,i);
+            res.board[pos.n as usize].ground = TileGround::Safe;
+        }
+        res.board[TREASURE_TILE as usize].ground = TileGround::Treasure;
         res
     }
 
     pub fn add_player(&mut self,player_id:String,score:i32)->Result<GameMessage,String>{
 
-        if self.running{
+        if !self.is_open(){
             panic!("cannot add player to running game")
         }
 
@@ -215,7 +249,7 @@ impl Game{
         let start_position = Pos::from_ints( 2,(num*2+2)%BOARD_SIZE);
 
 
-        self.board[start_position.n as usize] = Tile::Taken(PlayerNumber(num), Piece::King);
+        self.board[start_position.n as usize].status = TileStatus::Taken(PlayerNumber(num), Piece::King);
 
         println!("adding king on field {}",start_position.n);
 
@@ -224,7 +258,7 @@ impl Game{
             id: id.clone(),
             number: PlayerNumber(self.players.len() as i32),
             token,
-            score,
+            value: score,
             king_pos:start_position,
             energy: 3.,
             got_treasure: false,
@@ -243,6 +277,55 @@ impl Game{
 
     }
 
+    pub fn remove_player_from_lobby(&mut self,token: &u32)->Result<(),NotFound<String>>{
+        if !self.is_open(){
+            return Err(NotFound("game allready in progress".to_string()))
+        }
+        match self.players.remove(token){
+            Some(_)=>{
+                return Ok(())
+            }
+            None=>{
+                return Err(NotFound("cant find player for this game".to_string()))
+            }
+        }
+    }
+
+    pub fn remove_player_from_game(&mut self, token:&u32)->Result<GameMessage,NotFound<String>>{
+        if self.is_open(){
+            return Err(NotFound("game not started".to_string()))
+        }
+
+        if ! self.players.contains_key(token){
+            return Err(NotFound("cant get player".to_string()));
+        }
+
+        let gameover = self.players.len() == 2;
+
+        if gameover{
+            //make other player win
+            let mut tokens = self.players.keys();
+            let mut winner_token = *tokens.next().unwrap();
+            if winner_token == *token{
+                winner_token = *tokens.next().unwrap();
+            }
+            let winner = self.players.get(&winner_token).unwrap();
+            let msg = GameMessage::End { winning_number: winner.number.0, value: self.value };
+            let res = Ok(GameMessage::End { winning_number: winner.number.0, value: self.value });
+            self.broadcast(msg);
+            self.status = GameStatus::Finished;
+            return res;
+        }else{
+            let player = self.players.get(&token).unwrap();
+            let fee = player.value/10;
+            let new_val = player.value - fee;
+            let res = Ok (GameMessage::Leave { name: player.id.0.clone(), value:new_val });
+            self.players.remove(&token);
+            return res;
+        }
+
+    }
+
     pub fn start(&mut self, token: u32)->Result<(),String>{
 
         if ! self.players.contains_key(&token){
@@ -255,11 +338,11 @@ impl Game{
             return Err("not enough players to start game".to_string())
         }
 
-        if self.running{
+        if self.status != GameStatus::Lobby{
             return Ok(())
         }
 
-        self.running = true;
+        self.status = GameStatus::Running;
 
         let mut tokens : Vec<_> = vec![];
 
@@ -267,7 +350,7 @@ impl Game{
 
         for player in self.players.values_mut(){
             tokens.push(player.token);
-            self.value += player.score/10;
+            self.value += player.value/10;
             player.last_move_time = start_time;
             
         }
@@ -282,19 +365,19 @@ impl Game{
         for (_,p) in self.players.iter_mut(){
 
 
-            let fee = p.score/10;
+            let fee = p.value/10;
             let target_value;
 
             if p.number.0 == winner{
-                target_value = p.score + self.value - fee;
+                target_value = p.value + self.value - fee;
             }else{
-                target_value = p.score - fee;
+                target_value = p.value - fee;
             }
 
 
             let fut = database::set_player_score(&p.id.0,target_value,secret);
             if let Err(e) = fut.await{
-                println!("error setting scores {}",e);
+                println!("error setting scores {}",e.0);
             }
         }
     }
@@ -312,11 +395,11 @@ impl Game{
     }
 
     pub fn is_open(&self)->bool{
-        // self.players.len() < 10
-        (! self.running ) && (self.players.len() as i32) < MAXPLAYERCOUNT
+        (self.status == GameStatus::Lobby ) && (self.players.len() as i32) < MAXPLAYERCOUNT
     }
 
     pub fn make_move(&mut self,token: u32,start:i32,end:i32,spawn:i32)->MoveResult{   
+
 
         println!("trying to make move {} {} {} ",start,end,spawn);
 
@@ -334,6 +417,7 @@ impl Game{
 
         if let Some(player) = self.players.get_mut(&token){
 
+
             start_pos = player.relative_to_absolute(start);
             end_pos = player.relative_to_absolute(end);
 
@@ -345,7 +429,14 @@ impl Game{
             player_num = player.number;
             energy = player.energy;
 
+
+
             let time_diff = player.last_move_time.elapsed().as_secs_f32();
+
+            if time_diff < MOVE_DELAY{
+                return MoveResult::Fail
+            }
+
             player.last_move_time = time::Instant::now();
 
 
@@ -370,10 +461,10 @@ impl Game{
         }
         
         
-        let origin = self.board[start_pos.n as usize];
-        let succ = match origin{
+        let origin_status = self.board[start_pos.n as usize].status;
+        let succ = match origin_status{
 
-            Tile::Taken(num,piece)=>{
+            TileStatus::Taken(num,piece)=>{
 
                 if num != player_num{
                     println!("move not allowed {:?} {:?}",num, player_num);
@@ -390,7 +481,7 @@ impl Game{
                                     //try move the king
                                     println!("try tp move king");
 
-                                    if let Tile::Taken(num, _) =  self.board[end_pos.n as usize] {
+                                    if let TileStatus::Taken(num, _) =  self.board[end_pos.n as usize].status {
                                         if num == player_num {
                                             return MoveResult::Fail
                                         }else{
@@ -411,11 +502,12 @@ impl Game{
                                                 //move the king
 
 
-                                                if self.board[end_pos.n as usize] == Tile::Treasure{
+                                                // if self.board[end_pos.n as usize] == TileStatus::Treasure{
+                                                if Some(end_pos.n) == self.treasure_position{
                                                     self.take_treasure(&token)
                                                 }
 
-                                                if let Tile::Taken(pn, Piece::King) = self.board[end_pos.n as usize]{
+                                                if let TileStatus::Taken(pn, Piece::King) = self.board[end_pos.n as usize].status{
 
                                                     if let Some(holder) = self.treasure_holder {
                                                         if holder == pn{
@@ -428,6 +520,10 @@ impl Game{
                                                     player.king_pos = target;
                                                 });
 
+                                                if self.board[end_pos.n as usize].ground == TileGround::Safe && matches!(self.board[end_pos.n as usize].status, TileStatus::Taken(_,_)){
+                                                    return MoveResult::Fail;
+                                                }
+
                                                 if end_pos.x == 0{
                                                     if self.players.get(&token).expect("lost player").got_treasure{
                                                         let end_message = GameMessage::End { winning_number: num.0, value: self.value};
@@ -437,8 +533,12 @@ impl Game{
                                                     }
                                                 }
 
-                                                self.board[end_pos.n as usize] = self.board[start_pos.n as usize];
-                                                self.board[start_pos.n as usize] = Tile::Empty;
+
+                                                self.board[end_pos.n as usize].status = self.board[start_pos.n as usize].status;
+                                                self.board[start_pos.n as usize].status = TileStatus::Empty;
+                                                if self.board[start_pos.n as usize].ground == TileGround::Treasure{
+                                                    self.board[start_pos.n as usize].ground = TileGround::Ground
+                                                }
 
 
                                                 succ = true;
@@ -468,7 +568,7 @@ impl Game{
 
             }
 
-            Tile::Empty | Tile::Treasure=>{
+            TileStatus::Empty =>{
                 println!{"error empty origin"}
                 false
             }
@@ -493,18 +593,23 @@ impl Game{
         
         let cost = piece.get_cost() as f32;
 
-        if *energy >= cost{
-            *energy -= cost
-        }else{
-            println!("not enough energy");
-            return false
-        };
-
         
 
-        if self.board[end_pos.n as usize] == Tile::Empty && self.move_is_possible(start_pos, end_pos, &token, piece){
-    
-            self.board[end_pos.n as usize] = Tile::Taken(player_num, piece);
+        if self.board[end_pos.n as usize].ground == TileGround::Treasure{
+            return false
+        }
+        
+
+        if self.board[end_pos.n as usize].status == TileStatus::Empty && self.move_is_possible(start_pos, end_pos, &token, piece){
+            if *energy >= cost{
+                *energy -= cost
+            }else{
+                println!("not enough energy");
+                return false
+            };
+
+            self.board[end_pos.n as usize].status = TileStatus::Taken(player_num, piece);
+            
             true
         }else{
             false
@@ -512,12 +617,20 @@ impl Game{
     }
 
     fn piece_move(&mut self, start: Pos, end: Pos, token: &PlayerToken, piece: Piece) -> bool {
+
+        if self.board[end.n as usize].ground == TileGround::Safe && matches !(self.board[end.n as usize].status, TileStatus::Taken(_, _)){
+            //cant kill on safe ground
+            return false
+        }
+
         if self.move_is_possible(start, end, token, piece){
 
-            if self.board[end.n as usize] == Tile::Treasure 
+
+            // if self.board[end.n as usize] == TileStatus::Treasure
+            if Some(end.n) == self.treasure_position
             {
                 self.take_treasure(token);
-            }else if let Tile::Taken(pn,Piece::King) = self.board[end.n as usize]{
+            }else if let TileStatus::Taken(pn,Piece::King) = self.board[end.n as usize].status{
                 if let Some(holder) = self.treasure_holder{
                     if holder == pn{
                         self.take_treasure(token)
@@ -525,8 +638,11 @@ impl Game{
                 }
             }
 
-            self.board[end.n as usize] = self.board[start.n as usize];
-            self.board[start.n as usize] = Tile::Empty;
+            self.board[end.n as usize].status = self.board[start.n as usize].status;
+            self.board[start.n as usize].status = TileStatus::Empty;
+            if self.board[start.n as usize].ground == TileGround::Treasure{
+                self.board[start.n as usize].ground = TileGround::Ground
+            }
 
             return true
         }
@@ -547,26 +663,31 @@ impl Game{
         match self.players.get_mut(&token){
             Some(mut player)=>{
 
-
                 if player.view_changed{
                     player.view_changed = false;
 
-                    if !self.running{
-                        let mut playerlist  = vec![];
-                        for (_,val) in  self.players.iter(){
-                            playerlist.push((val.id.0.clone(), val.number.0));
-                        } 
-                        Ok(Some(
-                            
-                            GameMessage::Lobby{
-                                players:playerlist
-                            }
-                        ))
-                    }else{
+                    match self.status{
+                        GameStatus::Lobby=>{
+                            let mut playerlist  = vec![];
+                            for (_,p) in  self.players.iter(){
+                                playerlist.push((p.id.0.clone(), p.number.0));
+                            } 
+                            Ok(Some(
+                                GameMessage::Lobby{
+                                    players:playerlist
+                                }
+                            ))
+                        }
+                        GameStatus::Running=>{
+                            let gs = self.get_current_view(&token);
 
-                        let gs = self.get_current_view(&token);
+                            Ok(gs)
+                        }
+                        GameStatus::Finished=>{
+                            let gs = self.conclusion.clone();
+                            Ok(gs)
+                        }
 
-                        Ok(gs)
                     }
 
                 }else{
@@ -640,7 +761,7 @@ impl Game{
 
             player.view_changed = false;
 
-            let mut res = [(0,0);81];
+            let mut res:[Option<Tile>;81] = [None;81];
 
             let margin = 4;
 
@@ -655,7 +776,7 @@ impl Game{
 
 
                     if x <0 || y <0 || x >= BOARD_SIZE || y >= BOARD_SIZE{
-                        nums = (-1,-1);
+                        nums = None;
                     }else{
 
 
@@ -663,21 +784,9 @@ impl Game{
 
                         let tile = self.board[n as usize];
 
+                        nums = Some(tile)
 
 
-                        nums = match tile{
-                            Tile::Empty=>{(0,0)}
-                            Tile::Treasure => {
-                                (-2,-2)
-                            }
-                            Tile::Taken(player, piece)=>{
-                                (
-                                    player.0,
-                                    piece.to_num() as i32
-
-                                )
-                            }
-                        };
                     }
 
                     res[index] = nums;
@@ -685,6 +794,7 @@ impl Game{
 
                 }
             }
+
 
             let energy = player.energy + player.last_move_time.elapsed().as_secs_f32() * ENERGY_REGEN;
 
@@ -720,8 +830,8 @@ impl Game{
                         let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
                         if pos_is_on_board(target) && player.can_see(target) && target == end{
 
-                            match self.board[target.n as usize]{
-                                Tile::Taken(pn,_)=>{
+                            match self.board[target.n as usize].status{
+                                TileStatus::Taken(pn,_)=>{
                                     if pn != player.number{
                                         return true
                                     }else{
@@ -730,7 +840,7 @@ impl Game{
                                         return false
                                     }
                                 }
-                                Tile::Empty | Tile::Treasure=>{
+                                TileStatus::Empty =>{
                                     return true
                                 }
                             }
@@ -744,7 +854,7 @@ impl Game{
                         let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
                         if pos_is_on_board(target) && player.can_see(target) && target == end{
 
-                            if let Tile::Taken( _,_ ) = self.board[target.n as usize]{
+                            if let TileStatus::Taken( _,_ ) = self.board[target.n as usize].status{
                                 return false
                             }else{
                                 return true
@@ -755,7 +865,7 @@ impl Game{
                         let target = Pos::from_ints(start.x + hop.0, start.y + hop.1);
                         if pos_is_on_board(target) && player.can_see(target) && target == end{
 
-                            if let Tile::Taken( other,_ ) = self.board[target.n as usize]{
+                            if let TileStatus::Taken( other,_ ) = self.board[target.n as usize].status{
                                 return other != player.number
                             }else{
                                 return false
@@ -799,7 +909,7 @@ impl Game{
                 if pos_is_on_board(target) && player.can_see(target){
 
                     if target == end{
-                        if let Tile::Taken(pn,_) = self.board[target.n as usize]{
+                        if let TileStatus::Taken(pn,_) = self.board[target.n as usize].status{
                             println!("not possible cant hit own unit");
                             return pn != player.number
                         }else {
@@ -807,7 +917,7 @@ impl Game{
                             return true
                         }
                     }
-                    if let Tile::Taken(_,_) = self.board[target.n as usize]{
+                    if let TileStatus::Taken(_,_) = self.board[target.n as usize].status{
 
                         break
                     }

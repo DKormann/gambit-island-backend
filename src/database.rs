@@ -1,6 +1,7 @@
 
 
 use postgrest::Postgrest;
+use rocket::response::status::NotFound;
 
 const REST_URL:&str = "https://fdyzrdylphrevhqfghxd.supabase.co/rest/v1";
 
@@ -140,20 +141,20 @@ pub async fn get_id(username: &str, secret: &String)->Result<String,String>{
 
 }
 
-pub async fn set_player_score(username: &str, value: i32, secret: &String)->Result<(),String>{
+pub async fn set_player_score(username: &str, value: i32, secret: &String)->Result<(),NotFound<String>>{
 
     let client = Postgrest::new(REST_URL)
         .insert_header("apikey", &secret)
         .insert_header("Authorization", format!("Bearer {}",&secret));
     
-    let id = get_id(username, secret).await?;
+    let id = get_id(username, secret).await.or_else(|e|Err(NotFound(e)))?;
     
     let payload = format!(r#"[{{"score":"{}"}}]"#, value);
 
     client.from("pirate_gambit_scores")
     .eq("id",id)
     .update(payload)
-    .execute().await.or_else(|_|{Err(format!("cant execute score update"))})?;
+    .execute().await.or_else(|_|{Err(NotFound(format!("cant execute score update")))})?;
     Ok(())
 
 }

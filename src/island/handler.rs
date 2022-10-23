@@ -51,6 +51,33 @@ impl MatchMaker {
 
     }
 
+    pub fn leave_lobby(&mut self, game_id: i32, token: u32) -> Result<(),NotFound<String>>{
+
+        match self.running_games.get_mut(&game_id){
+            Some (game)=>{
+                if game.is_open(){
+                    return game.remove_player_from_lobby(&token)
+                }else{
+                    return Err(NotFound("cant leave lobby, game allready started".to_string()))
+                }
+            }
+            None=>{
+                return Err(NotFound("cant find this game".to_string()))
+            }
+        }
+    }
+
+    pub fn leave_ongoing_game(&mut self, game_id: i32, token: u32)->Result<GameMessage,NotFound<String>>{
+        match self.running_games.get_mut(&game_id){
+            Some(game)=>{
+                return game.remove_player_from_game(&token)
+            }
+            None=>{
+                return Err(NotFound("cant find game".to_string()))
+            }
+        }
+    }
+
     pub fn start_game(&mut self, _game_id: i32, token: u32) -> Result<(),String>{
 
         match self.running_games.get_mut(&_game_id){

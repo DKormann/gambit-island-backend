@@ -5,6 +5,7 @@
 use rocket::response::status::NotFound;
 use rocket::{State, serde::json::Json};
 use serde::{Serialize};
+
 // use tokio::sync::oneshot;
 
 
@@ -15,12 +16,12 @@ use rocket::http::Header;
 use rocket::{Request, Response};
 use rocket::fairing::{Fairing, Info, Kind};
 
-use island::handler:: MatchMaker;
+use island::handler::MatchMaker;
+use island::game::Tile;
 
 mod island;
 
 mod database;
-
 
 
 pub struct CORS;
@@ -61,13 +62,14 @@ async fn main()->Result<(), rocket::Error>{
 
     let _rocket = rocket::build()
     .mount("/", routes![
-
         make_move,
         register,
         login,
         join_game,
         get_update,
         start_game,
+        leave_game,
+        leave_lobby,
         ])
     .manage(bank)
     .manage(db)
@@ -119,7 +121,6 @@ pub struct GameJoinMessage{
     token: u32,
 }
 
-
 #[get ("/api/join_game/<username>/<passhash>")]
 async fn join_game(username: String, passhash: String, api: &State<DB>, bank: &State<Bank>)-> Result<Json<GameMessage>,String>{
 
@@ -140,6 +141,59 @@ async fn join_game(username: String, passhash: String, api: &State<DB>, bank: &S
 
 }
 
+#[get ("/api/leave_lobby/<game_id>/<player_token>")]
+async fn leave_lobby(game_id: i32, player_token:u32, bank: &State<Bank>) -> Result<(),NotFound<String>>{
+
+    let mut mm = bank.lock().or_else(|_|{
+        return Err(NotFound("cant get lock".to_string()))
+    })?;
+
+    mm.leave_lobby(game_id, player_token)?;
+
+
+    Ok(())
+}
+
+#[get ("/api/leave_game/<game_id>/<player_token>")]
+async fn leave_game(game_id:i32, player_token:u32,bank : &State<Bank>,api: &State<DB>)-> Result<Json<GameMessage>,NotFound<String>>{
+    let res;
+    {
+        let mut mm = bank.lock().or_else(|_|{
+            return Err(NotFound("cant get lock".to_string()))
+        })?;
+
+        res = mm.leave_ongoing_game(game_id, player_token)?;
+    }
+
+    match &res{
+        GameMessage::Leave { name, value }=>{
+            database::set_player_score(&name, *value, &api.secret).await?;
+        }
+        GameMessage::End { winning_number,value:_} =>{
+            //end game
+            end_game(bank, api, game_id, *winning_number).await;
+            
+        }
+        msg=>{
+            panic!("leave can only produce end or leave message not {:?}",msg);
+        }
+    }
+
+    Ok(Json(res))
+}
+
+async fn end_game(bank: &State<Bank>,api:&State<DB>, game_id:i32,winning_number: i32){
+    let g = match bank.lock(){
+        Ok(mut mm)=>{
+            mm.take_game(game_id)
+        }
+        _=>{None}
+    };
+
+    if let Some(mut game) = g{
+        game.end(&api.secret,winning_number).await
+    }
+}
 
 #[derive(Serialize,Clone,Debug)]
 pub enum GameMessage{
@@ -152,18 +206,21 @@ pub enum GameMessage{
         players:Vec<(String, i32)>,
     },
     State{
-        data: Vec<(i32,i32)>,
+        data: Vec<Option<Tile>>,
         offset: (i32,i32),
         energy: f32,
         got_treasure : bool,
         treasure_holder : i32,
+    },
+    Leave{
+        name: String,
+        value: i32,
     },
     End{
         winning_number: i32,
         value: i32,
     }
 }
-
 
 #[get("/api/get_update/<game_id>/<player_token>")]
 async fn get_update ( game_id:i32, player_token:u32,bank :&State<Bank>) -> Result<Json<GameMessage>, NotFound<String>>{
@@ -193,19 +250,16 @@ async fn get_update ( game_id:i32, player_token:u32,bank :&State<Bank>) -> Resul
         }
     };
 
-
     match listener.await{
 
         Ok(msg)=>{
 
-            println!("deliver update {:?}",msg);
-
+            // println!("deliver update {:?}",msg);
             Ok(Json(msg))
 
         }
         Err(_)=>{
             Err(NotFound("cant find update".into()))
-
         }
 
     }
@@ -227,7 +281,9 @@ async fn start_game(game_id:i32, player_token:u32,bank : &State<Bank>) -> String
 pub enum MoveResult{
     Fail,
     Success,
-    End{winner: i32},
+    End{
+        winner: i32
+    },
 }
 
 #[post("/api/make_move/<game_id>/<player_token>/<start>/<end>/<spawn>")]
@@ -239,8 +295,6 @@ async fn make_move(
     spawn:i32,
     api: &State<DB>,
     bank:&State<Bank>)->Json<MoveResult>{
-
-    // let mut res= MoveResult::Fail;
 
     let res = match bank.lock(){
         Ok(mut mm)=>{
@@ -254,23 +308,13 @@ async fn make_move(
     };
 
     match res{
-        MoveResult::End{winner}=>{
+        MoveResult::End{winner: winning_number}=>{
 
-            let g = match bank.lock(){
-                Ok(mut mm)=>{
-                    mm.take_game(game_id)
-                }
-                _=>{None}
-            };
-
-            if let Some(mut game) = g{
-                game.end(&api.secret,winner).await
-            }
+            end_game(bank, api, game_id, winning_number).await;
         }
         _=>{}
     }
 
-    
     Json(res)
 }
 

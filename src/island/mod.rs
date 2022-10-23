@@ -1,2 +1,2 @@
 pub mod handler;
-mod game;
+pub mod game;
